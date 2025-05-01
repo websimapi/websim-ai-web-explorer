@@ -307,6 +307,7 @@
             let currentProxyIndex = 0;
             let proxySuccess = false;
             let disclaimerAccepted = localStorage.getItem('proxy_disclaimer_accepted') === 'true';
+            let isProcessingRequest = false;
             
             // Available proxy services to try
             const proxyServices = [
@@ -494,112 +495,24 @@
                 }
             });
             
-            // Functions
-            function navigateTo(url) {
-                if (!url) return;
-                
-                if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                    // Check if it's a domain or a search query
-                    if (url.includes('.') && !url.includes(' ')) {
-                        url = 'https://' + url;
-                    } else {
-                        // It's a search query
-                        url = 'https://www.google.com/search?q=' + encodeURIComponent(url);
-                    }
-                }
-                
-                try {
-                    // Reset proxy status before loading new page
-                    proxySuccess = false;
-                    proxyIndicator.classList.remove('proxy-active', 'proxy-error');
-                    proxyIndicator.style.display = 'none';
-                    
-                    // Load the URL
-                    explorerFrame.src = url;
-                    urlInput.value = url;
-                    addMessage('AI', `Navigating to ${url}`);
-                } catch (error) {
-                    addMessage('AI', `Sorry, I couldn't navigate to ${url}. Error: ${error.message}`);
-                }
-            }
-            
-            // Modified function to include proxy content
-            async function fetchContentViaProxy(url) {
-                if (!disclaimerAccepted) {
-                    addMessage('Status', 'Proxy services require accepting the disclaimer before continuing.');
-                    showDisclaimerModal();
-                    return null;
-                }
-                
-                const startIndex = currentProxyIndex;
-                let content = null;
-                let title = null;
-                let proxiesAttempted = 0;
-                
-                addMessage('Status', 'Trying to access content via proxy services...');
-                
-                // Try each proxy in sequence
-                while (proxiesAttempted < proxyServices.length) {
-                    const proxyService = proxyServices[currentProxyIndex];
-                    const proxyUrl = proxyService.getUrl(url);
-                    
+            // Add retry function for API calls
+            async function retryOperation(operation, maxRetries = 3, delay = 1000) {
+                let lastError;
+                for (let attempt = 1; attempt <= maxRetries; attempt++) {
                     try {
-                        const response = await fetch(proxyUrl, {
-                            method: 'GET',
-                            headers: {
-                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/webp,*/*;q=0.8',
-                                'Accept-Language': 'en-US,en;q=0.5',
-                            },
-                        });
-                        
-                        if (response.ok) {
-                            let data;
-                            if (proxyService.responseType === 'json') {
-                                data = await response.json();
-                                content = data.contents || data.content || '';
-                            } else {
-                                content = await response.text();
-                            }
-                            
-                            // Extract title
-                            const titleMatch = content.match(/<title[^>]*>(.*?)<\/title>/i);
-                            title = titleMatch ? titleMatch[1] : 'Untitled Page';
-                        }
-                        
-                        // Strip HTML tags for content
-                        const textContent = content.replace(/<[^>]*>/g, ' ')
-                            .replace(/\s+/g, ' ')
-                            .trim()
-                            .substring(0, 5000);
-                        
-                        proxySuccess = true;
-                        proxyIndicator.classList.add('proxy-active');
-                        proxyIndicator.style.display = 'inline-block';
-                        addMessage('AI', `Page loaded via ${proxyService.name} proxy: "${title}". I can now analyze this content for you. What would you like to know?`);
-                        return { title, content: textContent };
-                    
+                        return await operation();
                     } catch (error) {
-                        console.error(`Error with proxy ${proxyService.name}:`, error);
-                        proxyIndicator.classList.add('proxy-error');
-                        proxyIndicator.style.display = 'inline-block';
+                        lastError = error;
+                        console.log(`Attempt ${attempt} failed: ${error.message}. Retrying in ${delay}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        // Increase delay for next attempt (exponential backoff)
+                        delay *= 1.5;
                     }
-                
-                    // Try next proxy
-                    currentProxyIndex = (currentProxyIndex + 1) % proxyServices.length;
-                    proxiesAttempted++;
-                    
-                    // Add a small delay between proxy attempts to avoid overwhelming the network
-                    await new Promise(resolve => setTimeout(resolve, 500));
                 }
-                
-                // All proxies failed
-                proxyIndicator.classList.add('proxy-error');
-                proxyIndicator.style.display = 'inline-block';
-                addMessage('AI', `I tried ${proxyServices.length} different proxy services to access the page content, but couldn't bypass the security restrictions. I can still help navigate by URL or perform general web searches.`);
-                return null;
+                throw lastError; // If all retries fail, throw the last error
             }
             
-            // Modified function to include proxy content
+            // Modified function to include proxy content and retry mechanism
             async function processWithAI(userPrompt, currentUrl, pageTitle, pageContent) {
                 // Get proxy content if direct access failed
                 let enhancedContent = pageContent;
@@ -643,47 +556,60 @@
                 Be helpful, clear, and concise in your responses. If you can't perform a requested action due to browser limitations, explain why and suggest alternatives.
                 `;
                 
-                // Use the LLM API to process the prompt
-                const completion = await websim.chat.completions.create({
-                    messages: [
-                        {
-                            role: "system",
-                            content: systemPrompt
-                        },
-                        ...conversationHistory.slice(-8), 
-                        {
-                            role: "user",
-                            content: userPrompt
+                // Use the LLM API to process the prompt with retry mechanism
+                try {
+                    const completion = await retryOperation(async () => {
+                        return await websim.chat.completions.create({
+                            messages: [
+                                {
+                                    role: "system",
+                                    content: systemPrompt
+                                },
+                                ...conversationHistory.slice(-8), 
+                                {
+                                    role: "user",
+                                    content: userPrompt
+                                }
+                            ]
+                        });
+                    });
+                    
+                    const aiResponse = completion.content;
+                    
+                    // Parse any action from the response
+                    let action = null;
+                    const actionMatch = aiResponse.match(/\[ACTION:(\{.*?\})\]/);
+                    if (actionMatch && actionMatch[1]) {
+                        try {
+                            action = JSON.parse(actionMatch[1]);
+                            // Remove the action part from the displayed message
+                            const cleanMessage = aiResponse.replace(/\[ACTION:\{.*?\}\]/, '').trim();
+                            return { message: cleanMessage, action: action };
+                        } catch (e) {
+                            console.error("Failed to parse action:", e);
                         }
-                    ]
-                });
-                
-                const aiResponse = completion.content;
-                
-                // Parse any action from the response
-                let action = null;
-                const actionMatch = aiResponse.match(/\[ACTION:(\{.*?\})\]/);
-                if (actionMatch && actionMatch[1]) {
-                    try {
-                        action = JSON.parse(actionMatch[1]);
-                        // Remove the action part from the displayed message
-                        const cleanMessage = aiResponse.replace(/\[ACTION:\{.*?\}\]/, '').trim();
-                        return { message: cleanMessage, action: action };
-                    } catch (e) {
-                        console.error("Failed to parse action:", e);
                     }
+                    
+                    return { message: aiResponse, action: null };
+                } catch (error) {
+                    console.error("Chat completion failed after retries:", error);
+                    return { 
+                        message: `I'm having trouble processing your request right now. This could be due to high server load or a temporary issue. Please try again in a moment. (Error: ${error.message})`,
+                        action: null
+                    };
                 }
-                
-                return { message: aiResponse, action: null };
             }
             
             async function handleUserInput() {
                 const userPrompt = userInput.value.trim();
-                if (!userPrompt) return;
+                if (!userPrompt || isProcessingRequest) return;
                 
                 // Add user message
                 addMessage('User', userPrompt);
                 userInput.value = '';
+                
+                // Prevent multiple simultaneous requests
+                isProcessingRequest = true;
                 
                 // Show thinking indicator
                 statusLight.classList.remove('status-active');
@@ -719,12 +645,14 @@
                         await executeAction(aiResponse.action);
                     }
                 } catch (error) {
-                    addMessage('AI', `Sorry, I encountered an error: ${error.message}`);
+                    console.error("Error in handleUserInput:", error);
+                    addMessage('AI', `Sorry, I encountered an error processing your request. Please try again in a moment. (Error: ${error.message})`);
+                } finally {
+                    // Reset status indicator
+                    statusLight.classList.remove('status-thinking');
+                    statusLight.classList.add('status-active');
+                    isProcessingRequest = false;
                 }
-                
-                // Reset status indicator
-                statusLight.classList.remove('status-thinking');
-                statusLight.classList.add('status-active');
             }
             
             async function executeAction(action) {
