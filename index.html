@@ -155,12 +155,32 @@
             50% { opacity: 1; }
             100% { opacity: 0.5; }
         }
+        
+        .proxy-status {
+            font-size: 0.8rem;
+            margin-left: 10px;
+            padding: 2px 5px;
+            border-radius: 3px;
+            background-color: #f1c40f;
+            display: none;
+        }
+        
+        .proxy-active {
+            display: inline-block;
+            background-color: #2ecc71;
+        }
+        
+        .proxy-error {
+            display: inline-block;
+            background-color: #e74c3c;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>AI Web Explorer <span class="status-indicator status-active" id="status-light"></span></h1>
+            <h1>AI Web Explorer <span class="status-indicator status-active" id="status-light"></span>
+            <span class="proxy-status" id="proxy-indicator">PROXY</span></h1>
             <div>
                 <button id="clear-btn">Clear Chat</button>
             </div>
@@ -191,6 +211,32 @@
     <script>
         // Store conversation history
         let conversationHistory = [];
+        let currentProxyIndex = 0;
+        let proxySuccess = false;
+        
+        // Available proxy services to try
+        const proxyServices = [
+            {
+                name: 'allOrigins',
+                getUrl: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+                responseType: 'text'
+            },
+            {
+                name: 'corsproxy.io',
+                getUrl: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+                responseType: 'text'
+            },
+            {
+                name: 'corsAnywhere',
+                getUrl: (url) => `https://cors-anywhere.herokuapp.com/${url}`,
+                responseType: 'text'
+            },
+            {
+                name: 'jsonp',
+                getUrl: (url) => `https://jsonp.afeld.me/?url=${encodeURIComponent(url)}`,
+                responseType: 'json'
+            }
+        ];
         
         // DOM elements
         const explorerFrame = document.getElementById('explorer-frame');
@@ -204,6 +250,7 @@
         const sendBtn = document.getElementById('send-btn');
         const clearBtn = document.getElementById('clear-btn');
         const statusLight = document.getElementById('status-light');
+        const proxyIndicator = document.getElementById('proxy-indicator');
         
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -262,15 +309,24 @@
         });
         
         // Check if the page loaded successfully
-        explorerFrame.addEventListener('load', () => {
+        explorerFrame.addEventListener('load', async () => {
             try {
                 urlInput.value = explorerFrame.contentWindow.location.href;
-                // Try to access the iframe content
+                // Try to access the iframe content directly
                 const title = explorerFrame.contentDocument.title;
+                const bodyText = explorerFrame.contentDocument.body.innerText;
+                proxySuccess = false;
+                proxyIndicator.classList.remove('proxy-active', 'proxy-error');
+                proxyIndicator.style.display = 'none';
                 addMessage('AI', `Page loaded: "${title}". What would you like me to do with this page?`);
             } catch (error) {
-                // If we can't access the content, it's likely a CORS issue
-                addMessage('AI', `Page loaded, but I cannot access its content due to security restrictions. I can still help navigate by URL or perform general web searches.`);
+                // If direct access fails, try using proxies
+                const currentUrl = explorerFrame.src;
+                if (currentUrl && currentUrl !== 'about:blank') {
+                    await fetchContentViaProxy(currentUrl);
+                } else {
+                    addMessage('AI', `Ready to help you browse the web. Enter a URL or search term to get started.`);
+                }
             }
         });
         
@@ -289,6 +345,12 @@
             }
             
             try {
+                // Reset proxy status before loading new page
+                proxySuccess = false;
+                proxyIndicator.classList.remove('proxy-active', 'proxy-error');
+                proxyIndicator.style.display = 'none';
+                
+                // Load the URL
                 explorerFrame.src = url;
                 urlInput.value = url;
                 addMessage('AI', `Navigating to ${url}`);
@@ -297,95 +359,87 @@
             }
         }
         
-        function addMessage(sender, text) {
-            const messageDiv = document.createElement('div');
-            messageDiv.classList.add('message');
-            messageDiv.classList.add(sender.toLowerCase() + '-message');
+        async function fetchContentViaProxy(url) {
+            const startIndex = currentProxyIndex;
+            let content = null;
+            let title = null;
+            let proxiesAttempted = 0;
             
-            const senderSpan = document.createElement('strong');
-            senderSpan.textContent = sender + ': ';
+            addMessage('Status', 'Trying to access content via proxy...');
             
-            const textSpan = document.createElement('span');
-            textSpan.textContent = text;
-            
-            messageDiv.appendChild(senderSpan);
-            messageDiv.appendChild(textSpan);
-            chatMessages.appendChild(messageDiv);
-            
-            // Auto scroll to bottom
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-            
-            // Add to conversation history
-            if (sender.toLowerCase() !== 'status') {
-                conversationHistory.push({
-                    role: sender.toLowerCase() === 'user' ? 'user' : 'assistant',
-                    content: text
-                });
-                
-                // Keep conversation history manageable
-                if (conversationHistory.length > 20) {
-                    conversationHistory = conversationHistory.slice(-20);
-                }
-            }
-        }
-        
-        async function handleUserInput() {
-            const userPrompt = userInput.value.trim();
-            if (!userPrompt) return;
-            
-            // Add user message
-            addMessage('User', userPrompt);
-            userInput.value = '';
-            
-            // Show thinking indicator
-            statusLight.classList.remove('status-active');
-            statusLight.classList.add('status-thinking');
-            
-            try {
-                // Get current page URL
-                const currentUrl = explorerFrame.src;
-                
-                // Get information about the page content
-                let pageContent = "Unable to access page content due to security restrictions";
-                let pageTitle = "Unknown page";
+            // Try each proxy in sequence
+            while (proxiesAttempted < proxyServices.length) {
+                const proxyService = proxyServices[currentProxyIndex];
+                proxyIndicator.textContent = `PROXY: ${proxyService.name}`;
+                proxyIndicator.style.display = 'inline-block';
+                proxyIndicator.classList.remove('proxy-active', 'proxy-error');
                 
                 try {
-                    // This may not work for cross-origin requests due to browser security
-                    pageTitle = explorerFrame.contentDocument.title;
-                    const bodyText = explorerFrame.contentDocument.body.innerText;
-                    pageContent = bodyText.substring(0, 3000) + (bodyText.length > 3000 ? "..." : "");
+                    const response = await fetch(proxyService.getUrl(url));
+                    
+                    if (response.ok) {
+                        let data;
+                        if (proxyService.responseType === 'json') {
+                            data = await response.json();
+                            content = data.contents || data.content || '';
+                        } else {
+                            content = await response.text();
+                        }
+                        
+                        // Extract title
+                        const titleMatch = content.match(/<title[^>]*>(.*?)<\/title>/i);
+                        title = titleMatch ? titleMatch[1] : 'Untitled Page';
+                        
+                        // Strip HTML tags for content
+                        const textContent = content.replace(/<[^>]*>/g, ' ')
+                            .replace(/\s+/g, ' ')
+                            .trim()
+                            .substring(0, 5000);
+                        
+                        proxySuccess = true;
+                        proxyIndicator.classList.add('proxy-active');
+                        addMessage('AI', `Page loaded via proxy: "${title}". I can now analyze this content for you. What would you like to know?`);
+                        return { title, content: textContent };
+                    }
                 } catch (error) {
-                    console.error("Could not get page content:", error);
+                    console.error(`Error with proxy ${proxyService.name}:`, error);
+                    proxyIndicator.classList.add('proxy-error');
                 }
                 
-                // Process the user request with LLM
-                const aiResponse = await processWithAI(userPrompt, currentUrl, pageTitle, pageContent);
-                
-                // Handle AI response
-                addMessage('AI', aiResponse.message);
-                
-                // Execute actions if any
-                if (aiResponse.action) {
-                    await executeAction(aiResponse.action);
-                }
-            } catch (error) {
-                addMessage('AI', `Sorry, I encountered an error: ${error.message}`);
-            } finally {
-                // Reset status indicator
-                statusLight.classList.remove('status-thinking');
-                statusLight.classList.add('status-active');
+                // Try next proxy
+                currentProxyIndex = (currentProxyIndex + 1) % proxyServices.length;
+                proxiesAttempted++;
             }
+            
+            // All proxies failed
+            proxyIndicator.classList.add('proxy-error');
+            addMessage('AI', `I tried multiple methods to access the page content, but couldn't bypass the security restrictions. I can still help navigate by URL or perform general web searches.`);
+            return null;
         }
         
+        // Modified function to include proxy content
         async function processWithAI(userPrompt, currentUrl, pageTitle, pageContent) {
+            // Get proxy content if direct access failed
+            let enhancedContent = pageContent;
+            let enhancedTitle = pageTitle;
+            
+            if (pageContent === "Unable to access page content due to security restrictions" && currentUrl && currentUrl !== 'about:blank') {
+                const proxyData = await fetchContentViaProxy(currentUrl);
+                if (proxyData) {
+                    enhancedContent = proxyData.content;
+                    enhancedTitle = proxyData.title;
+                }
+            }
+            
             // Create a message for the AI that includes context
             const systemPrompt = `
             You are an advanced web browsing assistant that helps users navigate and interact with websites.
             
             Current Context:
             - Current URL: ${currentUrl}
-            - Page title: ${pageTitle}
-            - Page content snippet: ${pageContent.substring(0, 1000)}${pageContent.length > 1000 ? "..." : ""}
+            - Page title: ${enhancedTitle}
+            - Page content accessed via: ${proxySuccess ? "proxy service" : "direct iframe access"}
+            - Page content snippet: ${enhancedContent.substring(0, 1000)}${enhancedContent.length > 1000 ? "..." : ""}
             
             You can perform the following actions:
             1. Navigate to websites 
@@ -442,6 +496,55 @@
             return { message: aiResponse, action: null };
         }
         
+        async function handleUserInput() {
+            const userPrompt = userInput.value.trim();
+            if (!userPrompt) return;
+            
+            // Add user message
+            addMessage('User', userPrompt);
+            userInput.value = '';
+            
+            // Show thinking indicator
+            statusLight.classList.remove('status-active');
+            statusLight.classList.add('status-thinking');
+            
+            try {
+                // Get current page URL
+                const currentUrl = explorerFrame.src;
+                
+                // Get information about the page content
+                let pageContent = "Unable to access page content due to security restrictions";
+                let pageTitle = "Unknown page";
+                
+                try {
+                    // This may not work for cross-origin requests due to browser security
+                    pageTitle = explorerFrame.contentDocument.title;
+                    const bodyText = explorerFrame.contentDocument.body.innerText;
+                    pageContent = bodyText.substring(0, 3000) + (bodyText.length > 3000 ? "..." : "");
+                } catch (error) {
+                    console.error("Could not get page content:", error);
+                    // Don't fetch content via proxy here as it will be handled in processWithAI
+                }
+                
+                // Process the user request with LLM
+                const aiResponse = await processWithAI(userPrompt, currentUrl, pageTitle, pageContent);
+                
+                // Handle AI response
+                addMessage('AI', aiResponse.message);
+                
+                // Execute actions if any
+                if (aiResponse.action) {
+                    await executeAction(aiResponse.action);
+                }
+            } catch (error) {
+                addMessage('AI', `Sorry, I encountered an error: ${error.message}`);
+            } finally {
+                // Reset status indicator
+                statusLight.classList.remove('status-thinking');
+                statusLight.classList.add('status-active');
+            }
+        }
+        
         async function executeAction(action) {
             switch (action.type) {
                 case 'navigate':
@@ -460,8 +563,39 @@
                     addMessage('AI', `Unknown action type: ${action.type}`);
             }
         }
+        
+        function addMessage(sender, text) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message');
+            messageDiv.classList.add(sender.toLowerCase() + '-message');
+            
+            const senderSpan = document.createElement('strong');
+            senderSpan.textContent = sender + ': ';
+            
+            const textSpan = document.createElement('span');
+            textSpan.textContent = text;
+            
+            messageDiv.appendChild(senderSpan);
+            messageDiv.appendChild(textSpan);
+            chatMessages.appendChild(messageDiv);
+            
+            // Auto scroll to bottom
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            
+            // Add to conversation history
+            if (sender.toLowerCase() !== 'status') {
+                conversationHistory.push({
+                    role: sender.toLowerCase() === 'user' ? 'user' : 'assistant',
+                    content: text
+                });
+                
+                // Keep conversation history manageable
+                if (conversationHistory.length > 20) {
+                    conversationHistory = conversationHistory.slice(-20);
+                }
+            }
+        }
     </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
-
