@@ -154,6 +154,7 @@
             0% { opacity: 0.5; }
             50% { opacity: 1; }
             100% { opacity: 0.5; }
+        }
         
         .proxy-status {
             font-size: 0.8rem;
@@ -391,10 +392,11 @@
             // Populate the proxy list in the disclaimer
             function populateProxyList() {
                 proxyListElement.innerHTML = '';
-                proxyServices.forEach(proxy) => {
+                proxyServices.forEach((proxy) => {
                     const li = document.createElement('li');
                     li.textContent = `${proxy.name}`;
-                    proxyListElement.appendChild(li));
+                    proxyListElement.appendChild(li);
+                });
             }
             
             // Event listeners
@@ -406,7 +408,7 @@
                 if (e.key === 'Enter') {
                     navigateTo(urlInput.value);
                 }
-            );
+            });
             
             backBtn.addEventListener('click', () => {
                 try {
@@ -414,7 +416,7 @@
                 } catch (e) {
                     addMessage('AI', 'Unable to go back due to security restrictions.');
                 }
-            );
+            });
             
             forwardBtn.addEventListener('click', () => {
                 try {
@@ -422,7 +424,7 @@
                 } catch (e) {
                     addMessage('AI', 'Unable to go forward due to security restrictions.');
                 }
-            );
+            });
             
             refreshBtn.addEventListener('click', () => {
                 try {
@@ -430,7 +432,7 @@
                 } catch (e) {
                     addMessage('AI', 'Unable to refresh due to security restrictions.');
                 }
-            );
+            });
             
             sendBtn.addEventListener('click', handleUserInput);
             
@@ -439,26 +441,23 @@
                     e.preventDefault();
                     handleUserInput();
                 }
-            );
+            });
             
             clearBtn.addEventListener('click', () => {
                 chatMessages.innerHTML = '';
                 conversationHistory = [];
                 addMessage('AI', 'Chat cleared. What would you like me to help you with?');
-            }
-            );
+            });
             
             proxyInfo.addEventListener('click', () => {
                 showDisclaimerModal();
-            }
-            );
+            });
             
             acceptDisclaimerBtn.addEventListener('click', () => {
                 localStorage.setItem('proxy_disclaimer_accepted', 'true');
                 disclaimerAccepted = true;
                 hideDisclaimerModal();
-            }
-            );
+            });
             
             // Show disclaimer modal
             function showDisclaimerModal() {
@@ -490,22 +489,22 @@
                         }
                         await fetchContentViaProxy(currentUrl);
                     } else {
-                        addMessage('AI', `Ready to help you browse the web. Enter a URL or search term to get started.');
+                        addMessage('AI', 'Ready to help you browse the web. Enter a URL or search term to get started.');
                     }
                 }
-            );
+            });
             
             // Functions
             function navigateTo(url) {
-                if (!url)) return;
+                if (!url) return;
                 
                 if (!url.startsWith('http://') && !url.startsWith('https://')) {
                     // Check if it's a domain or a search query
-                    if (url.includes('.') && !url.includes(' '))) {
+                    if (url.includes('.') && !url.includes(' ')) {
                         url = 'https://' + url;
                     } else {
                         // It's a search query
-                        url = 'https://www.google.com/search?q=' + encodeURIComponent(url));
+                        url = 'https://www.google.com/search?q=' + encodeURIComponent(url);
                     }
                 }
                 
@@ -526,7 +525,7 @@
             
             // Modified function to include proxy content
             async function fetchContentViaProxy(url) {
-                if (!disclaimerAccepted)) {
+                if (!disclaimerAccepted) {
                     addMessage('Status', 'Proxy services require accepting the disclaimer before continuing.');
                     showDisclaimerModal();
                     return null;
@@ -542,20 +541,20 @@
                 // Try each proxy in sequence
                 while (proxiesAttempted < proxyServices.length) {
                     const proxyService = proxyServices[currentProxyIndex];
-                    const proxyUrl = proxyService.getUrl(url));
+                    const proxyUrl = proxyService.getUrl(url);
                     
                     try {
-                        const response = await fetch(proxyUrl), {
+                        const response = await fetch(proxyUrl, {
                             method: 'GET',
                             headers: {
                                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/webp,*/*;q=0.8',
                                 'Accept-Language': 'en-US,en;q=0.5',
                             },
-                        );
+                        });
                         
                         if (response.ok) {
                             let data;
-                            if (proxyService.responseType === 'json')) {
+                            if (proxyService.responseType === 'json') {
                                 data = await response.json();
                                 content = data.contents || data.content || '';
                             } else {
@@ -571,29 +570,32 @@
                         const textContent = content.replace(/<[^>]*>/g, ' ')
                             .replace(/\s+/g, ' ')
                             .trim()
-                            .substring(0, 5000));
+                            .substring(0, 5000);
                         
                         proxySuccess = true;
                         proxyIndicator.classList.add('proxy-active');
+                        proxyIndicator.style.display = 'inline-block';
                         addMessage('AI', `Page loaded via ${proxyService.name} proxy: "${title}". I can now analyze this content for you. What would you like to know?`);
                         return { title, content: textContent };
                     
                     } catch (error) {
                         console.error(`Error with proxy ${proxyService.name}:`, error);
                         proxyIndicator.classList.add('proxy-error');
+                        proxyIndicator.style.display = 'inline-block';
                     }
                 
-                // Try next proxy
-                currentProxyIndex = (currentProxyIndex + 1) % proxyServices.length;
-                proxiesAttempted++;
+                    // Try next proxy
+                    currentProxyIndex = (currentProxyIndex + 1) % proxyServices.length;
+                    proxiesAttempted++;
+                    
+                    // Add a small delay between proxy attempts to avoid overwhelming the network
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
                 
-                // Add a small delay between proxy attempts to avoid overwhelming the network
-                await new Promise(resolve => setTimeout(resolve, 500));
-            }
-            
-            // All proxies failed
-            proxyIndicator.classList.add('proxy-error');
-            addMessage('AI', `I tried ${proxyServices.length} different proxy services to access the page content, but couldn't bypass the security restrictions. I can still help navigate by URL or perform general web searches.`);
+                // All proxies failed
+                proxyIndicator.classList.add('proxy-error');
+                proxyIndicator.style.display = 'inline-block';
+                addMessage('AI', `I tried ${proxyServices.length} different proxy services to access the page content, but couldn't bypass the security restrictions. I can still help navigate by URL or perform general web searches.`);
                 return null;
             }
             
@@ -604,7 +606,7 @@
                 let enhancedTitle = pageTitle;
                 
                 if (pageContent === "Unable to access page content due to security restrictions" && currentUrl && currentUrl !== 'about:blank') {
-                    const proxyData = await fetchContentViaProxy(currentUrl));
+                    const proxyData = await fetchContentViaProxy(currentUrl);
                     if (proxyData) {
                         enhancedContent = proxyData.content;
                         enhancedTitle = proxyData.title;
@@ -636,10 +638,10 @@
                 
                 Example actions:
                 [ACTION:{"type":"navigate","url":"https://www.wikipedia.org"}]
-                Example actions:
-                [ACTION:{"type":"navigate","url":"https://www.wikipedia.org"}]
+                [ACTION:{"type":"search","query":"history of computers"}]
                 
                 Be helpful, clear, and concise in your responses. If you can't perform a requested action due to browser limitations, explain why and suggest alternatives.
+                `;
                 
                 // Use the LLM API to process the prompt
                 const completion = await websim.chat.completions.create({
@@ -648,28 +650,32 @@
                             role: "system",
                             content: systemPrompt
                         },
-                        ...conversationHistory.slice(-8)), 
+                        ...conversationHistory.slice(-8), 
                         {
                             role: "user",
                             content: userPrompt
                         }
                     ]
-                );
+                });
                 
                 const aiResponse = completion.content;
                 
                 // Parse any action from the response
                 let action = null;
-                const actionMatch = aiResponse.match(/\[ACTION:(\{.*?\}\]/);
-                if (actionMatch && actionMatch[1])) {
+                const actionMatch = aiResponse.match(/\[ACTION:(\{.*?\})\]/);
+                if (actionMatch && actionMatch[1]) {
                     try {
                         action = JSON.parse(actionMatch[1]);
                         // Remove the action part from the displayed message
-                        const cleanMessage = aiResponse.replace(/\[ACTION:(\{.*?\}\]/, '').trim();
+                        const cleanMessage = aiResponse.replace(/\[ACTION:\{.*?\}\]/, '').trim();
                         return { message: cleanMessage, action: action };
+                    } catch (e) {
+                        console.error("Failed to parse action:", e);
+                    }
                 }
                 
                 return { message: aiResponse, action: null };
+            }
             
             async function handleUserInput() {
                 const userPrompt = userInput.value.trim();
@@ -696,47 +702,47 @@
                         const title = explorerFrame.contentDocument.title;
                         const bodyText = explorerFrame.contentDocument.body.innerText;
                         pageContent = bodyText.substring(0, 3000) + (bodyText.length > 3000 ? "..." : "");
+                        pageTitle = title;
                     } catch (error) {
                         console.error("Could not get page content:", error);
                         // Don't fetch content via proxy here as it will be handled in processWithAI
                     }
                 
-                // Process the user request with LLM
-                const aiResponse = await processWithAI(userPrompt, currentUrl, pageTitle, pageContent);
-                
-                // Handle AI response
-                addMessage('AI', aiResponse.message);
-                
-                // Execute actions if any
-                if (aiResponse.action) {
-                    await executeAction(aiResponse.action);
-                }
-            } catch (error) {
-                addMessage('AI', `Sorry, I encountered an error: ${error.message}`);
-                }
-            
-            // Reset status indicator
-            statusLight.classList.remove('status-thinking');
-            statusLight.classList.add('status-active');
-        }
-        
-        async function executeAction(action) {
-            switch (action.type) {
-                case 'navigate':
-                    if (action.url) {
-                        navigateTo(action.url);
-                    }
-                    break;
-                
-                case 'search':
-                    if (action.query) {
-                        navigateTo(`https://www.google_com/search?q=${encodeURIComponent(action.query))`;
-                    }
+                    // Process the user request with LLM
+                    const aiResponse = await processWithAI(userPrompt, currentUrl, pageTitle, pageContent);
                     
-                    break;
+                    // Handle AI response
+                    addMessage('AI', aiResponse.message);
+                    
+                    // Execute actions if any
+                    if (aiResponse.action) {
+                        await executeAction(aiResponse.action);
+                    }
+                } catch (error) {
+                    addMessage('AI', `Sorry, I encountered an error: ${error.message}`);
+                }
                 
-                default:
-                    addMessage('AI', `Unknown action type: ${action.type}`);
+                // Reset status indicator
+                statusLight.classList.remove('status-thinking');
+                statusLight.classList.add('status-active');
+            }
+            
+            async function executeAction(action) {
+                switch (action.type) {
+                    case 'navigate':
+                        if (action.url) {
+                            navigateTo(action.url);
+                        }
+                        break;
+                    
+                    case 'search':
+                        if (action.query) {
+                            navigateTo(`https://www.google.com/search?q=${encodeURIComponent(action.query)}`);
+                        }
+                        break;
+                    
+                    default:
+                        addMessage('AI', `Unknown action type: ${action.type}`);
                 }
             }
             
@@ -750,9 +756,9 @@
                 const textSpan = document.createElement('span');
                 textSpan.textContent = text;
                 
-                messageDiv.appendChild(senderSpan));
-                messageDiv.appendChild(textSpan));
-                chatMessages.appendChild(messageDiv));
+                messageDiv.appendChild(senderSpan);
+                messageDiv.appendChild(textSpan);
+                chatMessages.appendChild(messageDiv);
                 
                 // Auto scroll to bottom
                 chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -762,15 +768,16 @@
                     conversationHistory.push({
                         role: sender.toLowerCase() === 'user' ? 'user' : 'assistant',
                         content: text
-                    }));
+                    });
+                }
                 
                 // Keep conversation history manageable
-                if (conversationHistory.length > 20)) {
-                    conversationHistory = conversationHistory.slice(-20));
+                if (conversationHistory.length > 20) {
+                    conversationHistory = conversationHistory.slice(-20);
                 }
             }
-        
         </script>
-    <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+    </div>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
