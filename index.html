@@ -282,6 +282,37 @@
         .frame-error-buttons button.secondary {
             background-color: #95a5a6;
         }
+        
+        .frame-error-explanation {
+            margin-top: 1rem;
+            padding: 1rem;
+            background-color: #f8f8f8;
+            border-left: 4px solid #e74c3c;
+            font-size: 0.9rem;
+            line-height: 1.4;
+        }
+        
+        .technical-details {
+            margin-top: 1rem;
+            padding: 0.8rem;
+            background-color: #f1f1f1;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.8rem;
+            max-height: 100px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        
+        .explanation-toggle {
+            color: #3498db;
+            cursor: pointer;
+            text-decoration: underline;
+            font-size: 0.8rem;
+            margin-top: 0.5rem;
+            display: inline-block;
+        }
     </style>
 </head>
 <body>
@@ -309,7 +340,17 @@
                 <!-- Add frame error overlay -->
                 <div class="frame-error-overlay" id="frame-error-overlay">
                     <h3>Website Cannot Be Displayed In Frame</h3>
-                    <p>This website (like Google, Facebook, and many others) has security protections that prevent it from being displayed in frames on other websites.</p>
+                    <p id="error-message">This website has security restrictions that prevent it from being displayed in frames on other websites.</p>
+                    
+                    <div class="frame-error-explanation">
+                        <p><strong>What's happening?</strong> The website you're trying to access (like Google, Facebook, and many others) uses security headers like <code>X-Frame-Options: sameorigin</code> to protect their users from clickjacking and other security attacks.</p>
+                        
+                        <p><strong>Technical details:</strong> <span class="explanation-toggle" id="show-technical-details">Show technical details</span></p>
+                        <div class="technical-details" id="technical-details" style="display: none;">
+                            <!-- This will be populated with the specific error message -->
+                        </div>
+                    </div>
+                    
                     <p>Would you like me to use a proxy service to try to retrieve the content, or would you prefer to continue browsing somewhere else?</p>
                     <div class="frame-error-buttons">
                         <button id="try-proxy-btn">Try Proxy Service</button>
@@ -364,6 +405,7 @@
             let proxySuccess = false;
             let disclaimerAccepted = localStorage.getItem('proxy_disclaimer_accepted') === 'true';
             let currentBlockedUrl = null;
+            let lastFrameError = null;
             
             // Available proxy services to try
             const proxyServices = [
@@ -439,6 +481,9 @@
             const frameErrorOverlay = document.getElementById('frame-error-overlay');
             const tryProxyBtn = document.getElementById('try-proxy-btn');
             const dismissErrorBtn = document.getElementById('dismiss-error-btn');
+            const errorMessage = document.getElementById('error-message');
+            const technicalDetails = document.getElementById('technical-details');
+            const showTechnicalDetails = document.getElementById('show-technical-details');
             
             // Initialize
             document.addEventListener('DOMContentLoaded', () => {
@@ -447,7 +492,21 @@
                 
                 // Populate proxy list in the disclaimer
                 populateProxyList();
+                
+                // Add event listener for toggling technical details
+                showTechnicalDetails.addEventListener('click', toggleTechnicalDetails);
             });
+            
+            // Function to toggle technical details visibility
+            function toggleTechnicalDetails() {
+                if (technicalDetails.style.display === 'none') {
+                    technicalDetails.style.display = 'block';
+                    showTechnicalDetails.textContent = 'Hide technical details';
+                } else {
+                    technicalDetails.style.display = 'none';
+                    showTechnicalDetails.textContent = 'Show technical details';
+                }
+            }
             
             // Additional event listeners for frame error overlay
             tryProxyBtn.addEventListener('click', async () => {
@@ -470,9 +529,22 @@
                 addMessage('AI', 'Frame restriction dismissed. You can enter a different URL or ask me to search for something else.');
             });
             
-            // Show frame error overlay
-            function showFrameErrorOverlay(url) {
+            // Enhanced function to show frame error overlay with specific error details
+            function showFrameErrorOverlay(url, errorInfo) {
                 currentBlockedUrl = url;
+                lastFrameError = errorInfo;
+                
+                // Update error message based on error type
+                if (errorInfo && errorInfo.includes('X-Frame-Options')) {
+                    errorMessage.textContent = `The website "${new URL(url).hostname}" has set X-Frame-Options security headers that prevent it from being displayed in frames on other websites.`;
+                } else {
+                    errorMessage.textContent = `The website "${new URL(url).hostname}" has security restrictions that prevent it from being displayed in frames on other websites.`;
+                }
+                
+                // Update technical details
+                technicalDetails.textContent = errorInfo || 'Unable to determine specific error details.';
+                
+                // Show the overlay
                 frameErrorOverlay.style.display = 'flex';
             }
             
@@ -481,27 +553,209 @@
                 frameErrorOverlay.style.display = 'none';
             }
             
-            // Modified iframe error handling
-            explorerFrame.addEventListener('error', (event) => {
-                // This may capture some frame loading errors
-                console.log('Frame loading error:', event);
+            // Add an error event listener to the window
+            window.addEventListener('error', (event) => {
+                console.log('Window error event:', event);
             });
             
-            // Add an onerror handler to the window to catch frame loading errors
-            window.addEventListener('error', (event) => {
-                if (event.target === explorerFrame) {
-                    console.log('Frame error occurred:', event);
+            // Add a message event listener to capture frame errors
+            window.addEventListener('message', (event) => {
+                if (event.data && event.data.type === 'frameError') {
+                    console.log('Frame error received:', event.data.error);
                 }
             });
             
-            // Populate the proxy list in the disclaimer
-            function populateProxyList() {
-                proxyListElement.innerHTML = '';
-                proxyServices.forEach((proxy) => {
-                    const li = document.createElement('li');
-                    li.textContent = `${proxy.name}`;
-                    proxyListElement.appendChild(li);
-                });
+            // Enhanced iframe error handling - create a custom error handler for console errors
+            const originalConsoleError = console.error;
+            console.error = function() {
+                // Check if this is a frame-related error
+                const errorStr = Array.from(arguments).join(' ');
+                if (
+                    errorStr.includes('Refused to display') || 
+                    errorStr.includes('X-Frame-Options') || 
+                    errorStr.includes('cross-origin frame')
+                ) {
+                    // Extract the URL from the error message
+                    const urlMatch = errorStr.match(/'(https?:\/\/[^']+)'/);
+                    if (urlMatch && urlMatch[1]) {
+                        const blockedUrl = urlMatch[1];
+                        console.log('Detected frame restriction for:', blockedUrl);
+                        if (explorerFrame.src === blockedUrl) {
+                            showFrameErrorOverlay(blockedUrl, errorStr);
+                        }
+                    }
+                }
+                // Call the original console.error
+                originalConsoleError.apply(console, arguments);
+            };
+            
+            // Modified content fetching logic to better handle X-Frame-Options errors
+            explorerFrame.addEventListener('load', async () => {
+                try {
+                    const frameUrl = explorerFrame.contentWindow.location.href;
+                    urlInput.value = frameUrl;
+                    
+                    // Try to access the iframe content directly
+                    const title = explorerFrame.contentDocument.title;
+                    const bodyText = explorerFrame.contentDocument.body.innerText;
+                    
+                    // If we get here, iframe content is accessible
+                    proxySuccess = false;
+                    proxyIndicator.classList.remove('proxy-active', 'proxy-error');
+                    proxyIndicator.style.display = 'none';
+                    hideFrameErrorOverlay();
+                    addMessage('AI', `Page loaded: "${title}". What would you like me to do with this page?`);
+                } catch (error) {
+                    // This is triggered by cross-origin or X-Frame-Options restrictions
+                    const currentUrl = explorerFrame.src;
+                    
+                    // Skip for about:blank and empty URLs
+                    if (currentUrl && currentUrl !== 'about:blank') {
+                        console.log('Frame access error:', error);
+                        
+                        // Record the specific error
+                        const errorMessage = error.toString();
+                        
+                        // Show the frame error overlay with detailed information
+                        showFrameErrorOverlay(currentUrl, errorMessage);
+                        
+                        // Explain the error in the chat
+                        if (errorMessage.includes('X-Frame-Options')) {
+                            addMessage('Status', `The website ${new URL(currentUrl).hostname} uses X-Frame-Options security headers that prevent it from being displayed in a frame.`);
+                        } else {
+                            addMessage('Status', `The website ${new URL(currentUrl).hostname} has security restrictions that prevent it from being displayed in a frame.`);
+                        }
+                        
+                        // Add educational content about iframe restrictions
+                        addMessage('AI', `Many websites like Google, Facebook, and others use security features such as X-Frame-Options to protect their users from attacks like clickjacking. This is a security best practice, but it means I can't display the site directly in this interface. I can try to access the content using a proxy service instead.`);
+                        
+                        // Automatically try proxy if disclaimer is accepted
+                        if (disclaimerAccepted) {
+                            const proxyResult = await fetchContentViaProxy(currentUrl);
+                            if (proxyResult) {
+                                addMessage('AI', `I've retrieved content from ${currentUrl} using a proxy service. What would you like to know about this page?`);
+                            }
+                        }
+                    } else {
+                        addMessage('AI', 'Ready to help you browse the web. Enter a URL or search term to get started.');
+                    }
+                }
+            });
+            
+            // Enhanced proxy fetch logic with better error reporting
+            async function fetchContentViaProxy(url) {
+                if (!disclaimerAccepted) {
+                    addMessage('Status', 'Proxy services require accepting the disclaimer before continuing.');
+                    showDisclaimerModal();
+                    return null;
+                }
+                
+                const startIndex = currentProxyIndex;
+                let content = null;
+                let title = null;
+                let proxiesAttempted = 0;
+                
+                addMessage('Status', 'Trying to access content via proxy services to bypass X-Frame-Options restrictions...');
+                
+                // Try each proxy in sequence
+                while (proxiesAttempted < proxyServices.length) {
+                    const proxyService = proxyServices[currentProxyIndex];
+                    const proxyUrl = proxyService.getUrl(url);
+                    
+                    try {
+                        addMessage('Status', `Attempting with proxy: ${proxyService.name}...`);
+                        
+                        const response = await fetch(proxyUrl, {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/webp,*/*;q=0.8',
+                                'Accept-Language': 'en-US,en;q=0.5',
+                            },
+                        });
+                        
+                        if (response.ok) {
+                            let data;
+                            if (proxyService.responseType === 'json') {
+                                data = await response.json();
+                                content = data.contents || data.content || '';
+                            } else {
+                                content = await response.text();
+                            }
+                            
+                            // Extract title
+                            const titleMatch = content.match(/<title[^>]*>(.*?)<\/title>/i);
+                            title = titleMatch ? titleMatch[1] : 'Untitled Page';
+                            
+                            // Better HTML sanitization - remove script tags, image tags, and other potentially problematic elements
+                            content = content
+                                .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+                                .replace(/<img\b[^>]*>/gi, '[IMAGE]')
+                                .replace(/<svg\b[^>]*>.*?<\/svg>/gi, '[SVG]')
+                                .replace(/<iframe\b[^>]*>.*?<\/iframe>/gi, '[IFRAME]');
+                            
+                            // Strip HTML tags for content
+                            const textContent = content.replace(/<[^>]*>/g, ' ')
+                                .replace(/\s+/g, ' ')
+                                .trim()
+                                .substring(0, 5000);
+                            
+                            proxySuccess = true;
+                            proxyIndicator.classList.add('proxy-active');
+                            proxyIndicator.style.display = 'inline-block';
+                            hideFrameErrorOverlay();
+                            
+                            addMessage('Status', `Successfully retrieved content via ${proxyService.name} proxy service.`);
+                            
+                            return { title, content: textContent };
+                        }
+                    } catch (error) {
+                        console.error(`Error with proxy ${proxyService.name}:`, error);
+                        addMessage('Status', `${proxyService.name} proxy failed: ${error.message}`);
+                    }
+                
+                    // Try next proxy
+                    currentProxyIndex = (currentProxyIndex + 1) % proxyServices.length;
+                    proxiesAttempted++;
+                    
+                    // Add a small delay between proxy attempts to avoid overwhelming the network
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
+                // All proxies failed
+                proxyIndicator.classList.add('proxy-error');
+                proxyIndicator.style.display = 'inline-block';
+                addMessage('AI', `I tried ${proxyServices.length} different proxy services to access the page content, but couldn't bypass the security restrictions. These restrictions (like X-Frame-Options) are legitimate security features that websites use to protect their users. I can still help navigate by URL or perform general web searches.`);
+                return null;
+            }
+            
+            // Function to navigate to a URL
+            function navigateTo(url) {
+                if (!url) return;
+                
+                if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                    // Check if it's a domain or a search query
+                    if (url.includes('.') && !url.includes(' ')) {
+                        url = 'https://' + url;
+                    } else {
+                        // It's a search query
+                        url = 'https://www.google.com/search?q=' + encodeURIComponent(url);
+                    }
+                }
+                
+                try {
+                    // Reset proxy status before loading new page
+                    proxySuccess = false;
+                    proxyIndicator.classList.remove('proxy-active', 'proxy-error');
+                    proxyIndicator.style.display = 'none';
+                    hideFrameErrorOverlay();
+                    
+                    // Load the URL
+                    explorerFrame.src = url;
+                    urlInput.value = url;
+                    addMessage('AI', `Navigating to ${url}`);
+                } catch (error) {
+                    addMessage('AI', `Sorry, I couldn't navigate to ${url}. Error: ${error.message}`);
+                }
             }
             
             // Event listeners
@@ -574,129 +828,14 @@
                 disclaimerModal.style.display = 'none';
             }
             
-            // Check if the page loaded successfully
-            explorerFrame.addEventListener('load', async () => {
-                try {
-                    const frameUrl = explorerFrame.contentWindow.location.href;
-                    urlInput.value = frameUrl;
-                    
-                    // Try to access the iframe content directly
-                    const title = explorerFrame.contentDocument.title;
-                    const bodyText = explorerFrame.contentDocument.body.innerText;
-                    
-                    // If we get here, iframe content is accessible
-                    proxySuccess = false;
-                    proxyIndicator.classList.remove('proxy-active', 'proxy-error');
-                    proxyIndicator.style.display = 'none';
-                    hideFrameErrorOverlay();
-                    addMessage('AI', `Page loaded: "${title}". What would you like me to do with this page?`);
-                } catch (error) {
-                    // This is triggered by cross-origin or X-Frame-Options restrictions
-                    const currentUrl = explorerFrame.src;
-                    
-                    // Skip for about:blank and empty URLs
-                    if (currentUrl && currentUrl !== 'about:blank') {
-                        console.log('Frame access error:', error);
-                        // Show the frame error overlay
-                        showFrameErrorOverlay(currentUrl);
-                        
-                        // Update UI feedback
-                        addMessage('Status', `The website ${new URL(currentUrl).hostname} has security restrictions that prevent it from being displayed in a frame.`);
-                        
-                        // Automatically try proxy if disclaimer is accepted
-                        if (disclaimerAccepted) {
-                            const proxyResult = await fetchContentViaProxy(currentUrl);
-                            if (proxyResult) {
-                                addMessage('AI', `I've retrieved content from ${currentUrl} using a proxy service. What would you like to know about this page?`);
-                            }
-                        }
-                    } else {
-                        addMessage('AI', 'Ready to help you browse the web. Enter a URL or search term to get started.');
-                    }
-                }
-            });
-            
-            // Modified function to include proxy content and better error handling
-            async function fetchContentViaProxy(url) {
-                if (!disclaimerAccepted) {
-                    addMessage('Status', 'Proxy services require accepting the disclaimer before continuing.');
-                    showDisclaimerModal();
-                    return null;
-                }
-                
-                const startIndex = currentProxyIndex;
-                let content = null;
-                let title = null;
-                let proxiesAttempted = 0;
-                
-                addMessage('Status', 'Trying to access content via proxy services...');
-                
-                // Try each proxy in sequence
-                while (proxiesAttempted < proxyServices.length) {
-                    const proxyService = proxyServices[currentProxyIndex];
-                    const proxyUrl = proxyService.getUrl(url);
-                    
-                    try {
-                        const response = await fetch(proxyUrl, {
-                            method: 'GET',
-                            headers: {
-                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/webp,*/*;q=0.8',
-                                'Accept-Language': 'en-US,en;q=0.5',
-                            },
-                        });
-                        
-                        if (response.ok) {
-                            let data;
-                            if (proxyService.responseType === 'json') {
-                                data = await response.json();
-                                content = data.contents || data.content || '';
-                            } else {
-                                content = await response.text();
-                            }
-                            
-                            // Extract title
-                            const titleMatch = content.match(/<title[^>]*>(.*?)<\/title>/i);
-                            title = titleMatch ? titleMatch[1] : 'Untitled Page';
-                            
-                            // Better HTML sanitization - remove script tags, image tags, and other potentially problematic elements
-                            content = content
-                                .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-                                .replace(/<img\b[^>]*>/gi, '[IMAGE]')
-                                .replace(/<svg\b[^>]*>.*?<\/svg>/gi, '[SVG]')
-                                .replace(/<iframe\b[^>]*>.*?<\/iframe>/gi, '[IFRAME]');
-                            
-                            // Strip HTML tags for content
-                            const textContent = content.replace(/<[^>]*>/g, ' ')
-                                .replace(/\s+/g, ' ')
-                                .trim()
-                                .substring(0, 5000);
-                            
-                            proxySuccess = true;
-                            proxyIndicator.classList.add('proxy-active');
-                            proxyIndicator.style.display = 'inline-block';
-                            hideFrameErrorOverlay();
-                            
-                            // Add to conversation history but don't display a new message
-                            // (Since we're already showing a message elsewhere)
-                            return { title, content: textContent };
-                        }
-                    } catch (error) {
-                        console.error(`Error with proxy ${proxyService.name}:`, error);
-                    }
-                
-                    // Try next proxy
-                    currentProxyIndex = (currentProxyIndex + 1) % proxyServices.length;
-                    proxiesAttempted++;
-                    
-                    // Add a small delay between proxy attempts to avoid overwhelming the network
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                }
-                
-                // All proxies failed
-                proxyIndicator.classList.add('proxy-error');
-                proxyIndicator.style.display = 'inline-block';
-                addMessage('AI', `I tried ${proxyServices.length} different proxy services to access the page content, but couldn't bypass the security restrictions. I can still help navigate by URL or perform general web searches.`);
-                return null;
+            // Populate the proxy list in the disclaimer
+            function populateProxyList() {
+                proxyListElement.innerHTML = '';
+                proxyServices.forEach((proxy) => {
+                    const li = document.createElement('li');
+                    li.textContent = `${proxy.name}`;
+                    proxyListElement.appendChild(li);
+                });
             }
             
             async function handleUserInput() {
@@ -913,36 +1052,6 @@
                 // Keep conversation history manageable
                 if (conversationHistory.length > 20) {
                     conversationHistory = conversationHistory.slice(-20);
-                }
-            }
-            
-            // Function to navigate to a URL
-            function navigateTo(url) {
-                if (!url) return;
-                
-                if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                    // Check if it's a domain or a search query
-                    if (url.includes('.') && !url.includes(' ')) {
-                        url = 'https://' + url;
-                    } else {
-                        // It's a search query
-                        url = 'https://www.google.com/search?q=' + encodeURIComponent(url);
-                    }
-                }
-                
-                try {
-                    // Reset proxy status before loading new page
-                    proxySuccess = false;
-                    proxyIndicator.classList.remove('proxy-active', 'proxy-error');
-                    proxyIndicator.style.display = 'none';
-                    hideFrameErrorOverlay();
-                    
-                    // Load the URL
-                    explorerFrame.src = url;
-                    urlInput.value = url;
-                    addMessage('AI', `Navigating to ${url}`);
-                } catch (error) {
-                    addMessage('AI', `Sorry, I couldn't navigate to ${url}. Error: ${error.message}`);
                 }
             }
         </script>
